@@ -16,7 +16,7 @@ This is the official implementation of [Syntax-Guided Transformers: Elevating Co
 
 ## Introduction
 
-> Compositional generalization, the ability of intelligent models to extrapolate understanding of components to novel compositions, is a fundamental yet challenging facet in AI research, especially within multimodal environments. In this work, we address this challenge by exploiting the syntactic structure of language to boost compositional generalization. This paper elevates the importance of syntactic grounding, particularly through attention masking techniques derived from text input parsing. We introduce and evaluate the merits of using syntactic information in the multimodal grounding problem. Our results on grounded compositional generalization underscore the positive impact of dependency parsing across diverse tasks when utilized with Weight Sharing across the Transformer encoder. The results push the state-of-the-art in multimodal grounding and parameter-efficient modeling and provide insights for future research.
+Compositional generalization, the ability of intelligent models to extrapolate understanding of components to novel compositions, is a fundamental yet challenging facet in AI research, especially within multimodal environments. In this work, we address this challenge by exploiting the syntactic structure of language to boost compositional generalization. This paper elevates the importance of syntactic grounding, particularly through attention masking techniques derived from text input parsing. We introduce and evaluate the merits of using syntactic information in the multimodal grounding problem. Our results on grounded compositional generalization underscore the positive impact of dependency parsing across diverse tasks when utilized with Weight Sharing across the Transformer encoder. The results push the state-of-the-art in multimodal grounding and parameter-efficient modeling and provide insights for future research.
 
 ## Dependencies
 
@@ -29,27 +29,20 @@ This is the official implementation of [Syntax-Guided Transformers: Elevating Co
 Install VirtualEnv (optional):
 
 ```shell
-
 $ [sudo] pip install virtualenv
-
 ```
 
 Create and activate your virtual environment (optional):
 
 ```shell
-
-$virtualenv-ppython3venv
-
-$sourcevenv/bin/activate
-
+$ virtualenv -p python3 venv
+$ source venv/bin/activate
 ```
 
 Install all the required packages from `reascan/`:
 
 ```shell
-
-$pipinstall-rrequirements.txt
-
+$ pip install -r requirements.txt
 ```
 
 ## Data Preparation
@@ -62,15 +55,11 @@ Download and extract the ReaSCAN dataset in `reascan/data/ReaSCAN-v1.1` from [Re
 To preprocess data, run the following commands at `reascan/src/utils/`:
 
 ```shell
-
-$pythonpreprocess.py--datasetreascan
-
+$ python preprocess.py --dataset reascan
 ```
 
 ```shell
-
-$pythonpreprocess.py--datasetreascan--modedependency_mask
-
+$ python preprocess.py --dataset reascan --mode dependency_mask
 ```
 
 ## Usage
@@ -80,9 +69,7 @@ The set of possible arguments is available in the `args.py` file. Here, we illus
 From `/reascan/`:
 
 ```shell
-
-$pythonsrc/main.py--modetrain--test_splitcustom_comp--train_fnametrain.json--val_fnamedev_comp_3500.json--load_configreascan_share_layers_dependency.json--run_namerun_1--batch_size32--gpu0--lr0.0001--epochs120--seed3420
-
+$ python src/main.py --mode train --test_split custom_comp --train_fname train.json --val_fname dev_comp_3500.json --load_config reascan_share_layers_dependency.json --run_name run_1 --batch_size 32 --gpu 0 --lr 0.0001 --epochs 120 --seed 3420
 ```
 
 ## Acknowledgments
@@ -94,21 +81,12 @@ $pythonsrc/main.py--modetrain--test_splitcustom_comp--train_fnametrain.json--val
 If you find our work useful in your research, please consider citing:
 
 ```bibtex
-
 @misc{kamali2023syntaxguided,
-
-title={Syntax-Guided Transformers: Elevating Compositional Generalization and Grounding in Multimodal Environments}, 
-
-author={Danial Kamali and Parisa Kordjamshidi},
-
-year={2023},
-
-eprint={2311.04364},
-
-archivePrefix={arXiv},
-
-primaryClass={cs.CL}
-
+      title={Syntax-Guided Transformers: Elevating Compositional Generalization and Grounding in Multimodal Environments}, 
+      author={Danial Kamali and Parisa Kordjamshidi},
+      year={2023},
+      eprint={2311.04364},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
 }
-
 ```
