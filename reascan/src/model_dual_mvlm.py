@@ -1,0 +1,401 @@
+import copy
+import torch
+import torch.nn as nn
+
+from src.components.visual import *
+from src.components.language import *
+from src.components.connect import *
+from src.components.utils import *
+
+
+class MaskedMultiModalModel_Dual(nn.Module):
+    """
+    Complete MultiModal Transformer with Encoder and Decoder 
+    (For Training)
+    
+    Args:
+        input_txt: Input command
+        input_imgs: Input world state
+        image_loc: World state spatial locations
+        target_action: Target action
+        attention_mask: Input command mask
+        image_attention_mask: Input world state mask
+        target_mask: Target action mask
+            
+    Returns:
+        action_prediction: Output prob distribution over action tokens 
+        encoded_layers_t: Last encoded layer (Language Stream)
+        encoded_layers_v: Last encoded layer (Visual Stream)
+        all_attention_wts: Attention weights
+        all_attention_wts_b4_dropout: Attention weights (before dropout)
+    """
+    def __init__(self, config):
+        super(MaskedMultiModalModel_Dual, self).__init__()
+
+        # initialize command word embedding
+        self.embeddings = BertEmbeddings(config)
+            
+        # initialize action word embedding
+        self.output_action_embeddings = BertOutputEmbeddings(config)
+
+        # initialize grid world features from cell embeddings and locations
+        self.v_embeddings = BertImageEmbeddings(config)
+        
+        self.encoder = MultiModalEncoder_Dual(config)
+        self.classifier = Decoder(config)
+        
+#         self._reset_parameters()
+        
+    def forward(
+        self,
+        input_txt,
+        input_imgs,
+        image_loc,
+        attention_mask,
+        image_attention_mask,
+        output_all_encoded_layers=False,
+        output_all_attention_wts=False,
+    ):
+
+        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        extended_image_attention_mask = image_attention_mask.unsqueeze(1).unsqueeze(2)
+
+        extended_attention_mask = extended_attention_mask.to(
+            dtype=next(self.parameters()).dtype
+        )  # fp16 compatibility
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+
+        extended_image_attention_mask = extended_image_attention_mask.to(
+            dtype=next(self.parameters()).dtype
+        )  # fp16 compatibility
+        extended_image_attention_mask = (1.0 - extended_image_attention_mask) * -10000.0
+
+#         Embeddings for input command and input world state
+        embedding_output = self.embeddings(input_txt)
+        v_embedding_output = self.v_embeddings(input_imgs, image_loc)
+#         print(embedding_output.shape)
+#         print(v_embedding_output.shape)
+        
+#         Forward prop through encoder
+        encoded_layers_t, encoded_layers_v, all_attention_wts, all_attention_wts_b4_dropout = self.encoder(
+            embedding_output,
+            v_embedding_output,
+            extended_attention_mask,
+            extended_image_attention_mask,
+            output_all_encoded_layers=output_all_encoded_layers,
+            output_all_attention_wts=output_all_attention_wts,
+        )
+        
+#         Select last encoder layer
+        sequence_output_t = encoded_layers_t[-1]
+        sequence_output_v = encoded_layers_v[-1]
+
+        if not output_all_encoded_layers:
+            encoded_layers_t = encoded_layers_t[-1]
+            encoded_layers_v = encoded_layers_v[-1]
+            
+#         Forward through decoder
+        action_prediction = self.classifier(sequence_output_t)
+        return (
+            action_prediction,
+            encoded_layers_t,
+            encoded_layers_v,
+            all_attention_wts,
+            all_attention_wts_b4_dropout,
+            embedding_output,
+            v_embedding_output,
+        )
+    
+#     def _reset_parameters(self):
+#         r"""Initiate parameters in the transformer model."""
+
+#         for p in self.parameters():
+#             if p.dim() > 1:
+#                 nn.init.xavier_uniform_(p)
+
+
+class MultiModalEncoder_Dual(nn.Module):
+    """
+    MultiModal Encoder
+    
+    Args:
+        lang_embedding: Input embeddings for language stream
+        vis_embedding: Input embeddings for visual stream
+        lang_attention_mask: Mask for language stream
+        vis_attention_mask: Mask for visual stream
+
+    Returns:
+        all_attention_wts_b4_dropout: Attention weights (before dropout)
+        all_encoder_layers_l: Last encoded layer (Language Stream)
+        all_encoder_layers_v: Last encoded layer (Visual Stream)
+        (all_attention_wts_l, all_attention_wts_v, all_attention_wts_x): Attention weights
+        all_attention_wts_b4_dropout: Attention weights (before dropout)
+    """
+    def __init__(self, config):
+        super(MultiModalEncoder_Dual, self).__init__()
+        
+        self.interleave_self_attn = config.interleave_self_attn
+        
+#         Whether to allow co attention
+        self.with_coattention = config.with_coattention
+#         Which language layers use co attention
+        self.t_biattention_id = config.t_biattention_id
+#         Which visual layers use co attention
+        self.v_biattention_id = config.v_biattention_id
+        
+        
+#         Language Stream Layer
+        l_layer = BertLangLayer(config)        
+#         Visual Stream Layer
+        v_layer = BertVisLayer(config)    
+#         Co Attention Layer
+        x_layer = BertConnectLayer(config)            
+    
+        
+#         Make copy of all layers
+        if config.share_l_layers:
+            print("share_l_layers")
+            self.l_layer = nn.ModuleList(
+                [l_layer for _ in range(config.num_lang_layers)]
+            )
+        else:
+            self.l_layer = nn.ModuleList(
+                [copy.deepcopy(l_layer) for _ in range(config.num_lang_layers)]
+            )
+        if config.share_v_layers:
+            print("share_v_layers")
+
+            self.v_layer = nn.ModuleList(
+                [v_layer for _ in range(config.num_vis_layers)]
+            )
+        else:
+            self.v_layer = nn.ModuleList(
+                [copy.deepcopy(v_layer) for _ in range(config.num_vis_layers)]
+            )
+        if config.share_x_layers:
+            print("share_x_layers")
+            self.x_layer = nn.ModuleList(
+                [x_layer for _ in range(len(config.v_biattention_id))]
+            )
+        else:
+            self.x_layer = nn.ModuleList(
+                [copy.deepcopy(x_layer) for _ in range(len(config.v_biattention_id))]
+            )
+            
+    def forward(
+        self,
+        lang_embedding,
+        vis_embedding,
+        lang_attention_mask,
+        vis_attention_mask,
+        output_all_encoded_layers=False,
+        output_all_attention_wts=False,
+    ):
+        
+        v_start = 0
+        l_start = 0
+        count = 0
+        all_encoder_layers_l = []
+        all_encoder_layers_v = []
+        
+        all_attention_wts_l = []
+        all_attention_wts_v = []
+        all_attention_wts_x = []
+        all_attention_wts_b4_dropout = []
+        
+        batch_size, num_words, l_hidden_size = lang_embedding.size()
+        _, num_regions, v_hidden_size = vis_embedding.size()
+        
+#         Begin forward through both streams
+        if self.with_coattention == 'True':
+            if self.interleave_self_attn == 'True':
+                for v_layer_id, l_layer_id in zip(self.v_biattention_id, self.t_biattention_id):
+
+                    v_end = v_layer_id
+                    l_end = l_layer_id
+
+                    for idx in range(l_start, l_end):
+                        lang_embedding, lang_attention_probs = self.l_layer[idx](
+                            lang_embedding, lang_attention_mask
+                        )
+#                         print("Language Self Attention: ", idx)
+
+                        if output_all_encoded_layers:
+                            all_encoder_layers_l.append(lang_embedding)
+
+                        if output_all_attention_wts:
+                            all_attention_wts_l.append(lang_attention_probs)
+
+                    for idx in range(v_start, v_end):
+                        vis_embedding, vis_attention_probs = self.v_layer[idx](
+                            vis_embedding, vis_attention_mask
+                        )
+#                         print("Visual Self Attention: ", idx)
+
+                        if output_all_encoded_layers:
+                            all_encoder_layers_v.append(vis_embedding)
+
+                        if output_all_attention_wts:
+                            all_attention_wts_v.append(vis_attention_probs)    
+
+                    vis_embedding, lang_embedding, co_attention_probs, co_attention_probs_b4_dropout = self.x_layer[count](
+                        vis_embedding,
+                        vis_attention_mask,
+                        lang_embedding,
+                        lang_attention_mask,
+                    )
+#                     print("Visual Language Cross Attention: ", count)
+
+                    if output_all_encoded_layers:
+                        all_encoder_layers_l.append(lang_embedding)
+                        all_encoder_layers_v.append(vis_embedding)
+
+                    if output_all_attention_wts:
+                        all_attention_wts_x.append(co_attention_probs)
+                        all_attention_wts_b4_dropout.append(co_attention_probs_b4_dropout)                
+
+                    v_start = v_end
+                    l_start = l_end
+                    count += 1
+
+
+                for idx in range(l_start, len(self.l_layer)):
+                    lang_embedding, lang_attention_probs = self.l_layer[idx](
+                        lang_embedding, lang_attention_mask
+                    )
+#                     print("Language Self Attention: ", idx)
+
+                    if output_all_encoded_layers:
+                        all_encoder_layers_l.append(lang_embedding)
+
+                    if output_all_attention_wts:
+                        all_attention_wts_l.append(lang_attention_probs)
+
+                for idx in range(v_start, len(self.v_layer)):
+                    vis_embedding, vis_attention_probs = self.v_layer[idx](
+                        vis_embedding, vis_attention_mask
+                    )
+#                     print("Visual Self Attention: ", idx)
+
+                    if output_all_encoded_layers:
+                        all_encoder_layers_v.append(vis_embedding)
+
+                    if output_all_attention_wts:
+                        all_attention_wts_v.append(vis_attention_probs) 
+
+
+            else:
+    #             for idx in range(l_start, self.t_biattention_id[0]):
+    #                 lang_embedding, lang_attention_probs = self.l_layer[idx](
+    #                     lang_embedding, lang_attention_mask
+    #                 )
+    #                 print("Language Self Attention: ", idx)
+
+    #                 if output_all_encoded_layers:
+    #                     all_encoder_layers_l.append(lang_embedding)
+
+    #                 if output_all_attention_wts:
+    #                     all_attention_wts_l.append(lang_attention_probs)
+
+    #             for idx in range(v_start, self.v_biattention_id[0]):
+    #                 vis_embedding, vis_attention_probs = self.v_layer[idx](
+    #                     vis_embedding, vis_attention_mask
+    #                 )
+    #                 print("Visual Self Attention: ", idx)
+
+    #                 if output_all_encoded_layers:
+    #                     all_encoder_layers_v.append(vis_embedding)
+
+    #                 if output_all_attention_wts:
+    #                     all_attention_wts_v.append(vis_attention_probs)    
+
+                for v_layer_id, l_layer_id in zip(self.v_biattention_id, self.t_biattention_id):
+
+                    vis_embedding, lang_embedding, co_attention_probs, co_attention_probs_b4_dropout = self.x_layer[count](
+                        vis_embedding,
+                        vis_attention_mask,
+                        lang_embedding,
+                        lang_attention_mask,
+                    )
+#                     print("Visual Language Cross Attention: ", count)
+
+                    if output_all_attention_wts:
+                        all_attention_wts_x.append(co_attention_probs)
+                        all_attention_wts_b4_dropout.append(co_attention_probs_b4_dropout)  
+
+                    if output_all_encoded_layers:
+                        all_encoder_layers_l.append(lang_embedding)
+                        all_encoder_layers_v.append(vis_embedding)
+
+                    count += 1
+
+
+                if not output_all_encoded_layers:
+                    all_encoder_layers_l.append(lang_embedding)
+                    all_encoder_layers_v.append(vis_embedding) 
+                
+        else:
+            
+            for idx in range(0, len(self.l_layer)):
+                    lang_embedding, lang_attention_probs = self.l_layer[idx](
+                        lang_embedding, lang_attention_mask
+                    )
+#                     print("Language Self Attention: ", idx)
+
+                    if output_all_encoded_layers:
+                        all_encoder_layers_l.append(lang_embedding)
+
+                    if output_all_attention_wts:
+                        all_attention_wts_l.append(lang_attention_probs)
+
+            for idx in range(0, len(self.v_layer)):
+                vis_embedding, vis_attention_probs = self.v_layer[idx](
+                    vis_embedding, vis_attention_mask
+                )
+#                 print("Visual Self Attention: ", idx)
+
+                if output_all_encoded_layers:
+                    all_encoder_layers_v.append(vis_embedding)
+
+                if output_all_attention_wts:
+                    all_attention_wts_v.append(vis_attention_probs)
+            
+        
+        if not output_all_encoded_layers:
+            all_encoder_layers_l.append(lang_embedding)
+            all_encoder_layers_v.append(vis_embedding)
+            
+#         print('Language Stream Encodings (Inclusive of Co-Attention Layers): ', len(all_encoder_layers_l))
+#         print('Visual Stream Encodings (Inclusive of Co-Attention Layers): ', len(all_encoder_layers_v))
+            
+        return (
+            all_encoder_layers_l,
+            all_encoder_layers_v,
+            (all_attention_wts_l, all_attention_wts_v, all_attention_wts_x),
+            all_attention_wts_b4_dropout,
+        )
+    
+    
+class Decoder(nn.Module):
+    """
+    Decoder
+    
+    Args:
+        target: Target action
+        memory: Encoder Output
+        target_pad_mask: Mask for target action generation
+
+    Returns:
+        out: Prob Distribution over action tokens
+    """
+    def __init__(self, config):
+        super(Decoder, self).__init__()
+        
+        self.device = config.device
+        
+#         Generator to map decoder output to target vocab
+        self.generator = nn.Linear(config.decoder_hidden_size, config.vocab_size)
+            
+    def forward(self,memory):
+        
+        return self.generator(memory)

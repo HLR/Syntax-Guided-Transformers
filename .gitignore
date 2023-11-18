@@ -1,0 +1,12 @@
+*spatial_relation_splits*
+*ReaSCAN-v1.1*
+*__pycache__*
+*.pyc*
+*cpython*
+*.zip
+*test.json
+*test.json
+*data-compositional-splits.txt
+test.json
+data-compositional-splits.txt
+*/spatial_relation_splits/*
