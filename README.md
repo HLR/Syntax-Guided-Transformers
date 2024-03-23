@@ -81,12 +81,12 @@ $ python src/main.py --mode train --test_split custom_comp --train_fname train.j
 If you find our work useful in your research, please consider citing:
 
 ```bibtex
-@misc{kamali2023syntaxguided,
-      title={Syntax-Guided Transformers: Elevating Compositional Generalization and Grounding in Multimodal Environments}, 
-      author={Danial Kamali and Parisa Kordjamshidi},
-      year={2023},
-      eprint={2311.04364},
-      archivePrefix={arXiv},
-      primaryClass={cs.CL}
+@inproceedings{kamali2023syntax,
+  title={Syntax-Guided Transformers: Elevating Compositional Generalization and Grounding in Multimodal Environments},
+  author={Kamali, Danial and Kordjamshidi, Parisa},
+  booktitle={GenBench: The first workshop on generalisation (benchmarking) in NLP},
+  pages={130},
+  year={2023}
 }
+
 ```
